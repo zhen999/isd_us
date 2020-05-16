@@ -1,0 +1,437 @@
+---
+title: "R Notebook"
+output: html_notebook
+---
+
+This is an [R Markdown](http://rmarkdown.rstudio.com) Notebook. When you execute code within the notebook, the results appear beneath the code. 
+
+Try executing this chunk by clicking the *Run* button within the chunk or by placing your cursor inside it and pressing *Cmd+Shift+Enter*. 
+
+```{r}
+library(dplyr)
+library(ggplot2)
+options(scipen = 200)
+```
+
+
+```{r}
+getCountry <- function(country){
+  areadata <- select(data,contains(country))
+  colnames(areadata)<-c("confirm","death","heal") #,"added"
+  areadata$removed <- areadata$heal + areadata$death
+  areadata$infected <- areadata$confirm - areadata$removed
+  areadata <- cbind(date=data$date,areadata)
+  for (i in 1:nrow(areadata)){
+    if (i==1){
+      areadata$added[i]<-NA
+    }
+    else{
+      areadata$added[i]<-areadata$confirm[i]-areadata$confirm[i-1]
+    }
+  }
+  return(areadata)
+}
+
+getGamma<-function(data, window){
+  I <- as.numeric(data$infected)
+  R <- as.numeric(data$removed)
+  t<-nrow(data)
+  gamma<-rep(NA,(length(I)-2))
+  for (t in 2:length(I)){
+    if(t<=(window+1)){
+    deltaR<-R[2:t]-R[1:(t-1)]
+    I_input<- I[1:(t-1)]
+    df.gamma<-data.frame(date=data$date[1:(t-1)],deltaR=deltaR,I=I_input)
+    fit.gamma<-lm(deltaR~I-1,df.gamma)#无截距ols
+    gamma[(t-1)]<-fit.gamma$coefficients
+  }
+    else {
+    deltaR<-R[(t-window + 1):t]-R[(t-window):(t-1)]
+    I_input<- I[(t-window):(t-1)]
+    df.gamma<-data.frame(date=data$date[(t-window):(t-1)],deltaR=deltaR,I=I_input)
+    fit.gamma<-lm(deltaR~I-1,df.gamma)#无截距ols
+    gamma[(t-1)]<-fit.gamma$coefficients
+    
+  }
+}
+  return(gamma)
+}
+
+getHeal<-function(data, window){
+  I <- as.numeric(data$infected)
+  R <- as.numeric(data$heal)
+  t<-nrow(data)
+  mydata<-data.frame(time=1:t,I=I,R=R)
+  model1<-loess(I~time,data=mydata,span=0.85,degree=1)
+  I<-predict(model1, time=1:t)
+  model2<-loess(R~time,data=mydata,span=0.85,degree=1)
+  R<-predict(model2, time=1:t)
+  gamma<-rep(NA,(length(I)-2))
+  for (t in 2:length(I)){
+    if(t<=(window+1)){
+    deltaR<-R[2:t]-R[1:(t-1)]
+    I_input<- I[1:(t-1)]
+    df.gamma<-data.frame(date=data$date[1:(t-1)],deltaR=deltaR,I=I_input)
+    fit.gamma<-lm(deltaR~I-1,df.gamma)#无截距ols
+    gamma[(t-1)]<-fit.gamma$coefficients
+  }
+   else {
+    deltaR<-R[(t-window + 1):t]-R[(t-window):(t-1)]
+    I_input<- I[(t-window):(t-1)]
+    df.gamma<-data.frame(date=data$date[(t-window):(t-1)],deltaR=deltaR,I=I_input)
+    fit.gamma<-lm(deltaR~I-1,df.gamma)#无截距ols
+    gamma[(t-1)]<-fit.gamma$coefficients
+    
+  }
+  }
+  for (i in 1:length(gamma)){
+    if (gamma[i]<0){
+      gamma[i]<-0
+    }
+    else {
+      gamma[i]<-gamma[i]
+    }
+}
+  return(gamma)
+}
+
+
+
+getBeta<-function(data, window){
+  start<-as.numeric(rownames(data[1])[1])
+  end<-as.numeric(tail(rownames(data),1))
+  I.day<-seq(1,nrow(data),1)
+  #I <- as.numeric(data$infected)
+  I <- as.numeric(data$confirm)
+  lnI<-log(I)
+  df.betagam<-data.frame(time=I.day,lnI=log(I))
+  betagam<-rep(NA,length(I))
+  for (t in 1:length(I)){
+   if(t<=window){
+   I_input<- lnI[1:t]
+   df.betagam<-data.frame(date=data$date[1:t],time=I.day[1:t], lnI=lnI[1:t])
+   fit.betagam<-lm(lnI~time,df.betagam)
+   betagam[t-1]<-fit.betagam$coefficients[2]
+   }
+  else {
+    I_input<- lnI[(t-window):t]
+    df.betagam<-data.frame(date=data$date[(t-window):t],time=I.day[(t-window):t], lnI=lnI[(t-window):t])
+    fit.betagam<-lm(lnI~time,df.betagam)
+    betagam[t-1]<-fit.betagam$coefficients[2]
+  }
+  }
+  #beta<-getGamma(data,window)+betagam[1:(t-1)]
+  beta<-betagam[1:(t-1)]
+  return(beta)
+}
+
+country<-function(name){
+  getcountry<-getCountry(name)
+  start<-which(getcountry$confirm>=(pop[pop$country==name,2]/100000))[1]
+  #start<-which(getcountry$confirm>=1000)
+  out<-getcountry[start:(nrow(getcountry)),]
+  rownames(out) <- seq(1,nrow(out),1)
+  out[is.na(out)]<-0
+  return(out)
+}
+#plot(beta)
+#plot(gamma)
+```
+
+
+```{r}
+data<-read.csv('/Users/zhen/desktop/usisd/us.csv')
+#%>% .[1:(nrow(.)-1),]
+data[1:nrow(data),2:ncol(data)]<-as.matrix(data[1:nrow(data),2:ncol(data)])
+data[is.na(data)]<-0
+rownames(data) <- seq(1,nrow(data),1)
+pop<-read.csv('/Users/zhen/desktop/usisd/uspop.csv')
+popindex<-pop
+popindex$pop<-log(popindex$pop)/max(log(popindex$pop))
+countries<-read.csv('/Users/zhen/desktop/usisd/uscountry.csv',stringsAsFactors = FALSE)
+```
+
+
+
+
+```{r}
+all<-list()
+name<-c()
+#for (i in 1:nrow(countries)){
+#  all[[i]]<-country(countries[i,1])
+#}
+for (i in 1:nrow(countries)){
+  a<-country(countries[i,1])
+  if(tail(a$confirm,1)>=5000){
+    name<-c(name,countries[i,1])
+  }
+}
+for (i in 1:length(name)){
+  all[[i]]<-country(name[i])
+}
+```
+
+
+```{r}
+#country<-c('china','korea',"u.s","german","england","france","italy","sweden","iran","span")
+#country<-c('korea',"u.s","german","england","france","italy","sweden","iran","span")
+country<-c("u.s","german","england","france","italy","sweden","iran","span")
+scalling<-data.frame(country=country,duration=rep(NA,length(country)), peak=rep(NA,length(country)))
+rownames(scalling)<-country
+for (i in 1:length(country)){
+  scalling$duration[i]<-which.max(all[[i]]$added)
+  scalling$peak[i]<-max(all[[i]]$added)
+}
+scalling.all<-merge(scalling,pop)
+scalling.all$peak<-scalling.all$peak/scalling.all$pop*1000000
+scal<-data.frame(country=scalling.all$country,
+                 duration=tanh(scalling.all$duration-mean(scalling.all$duration))+1,
+                 peak=tanh(scalling.all$peak-mean(scalling.all$peak))+1)
+pe<-log(scalling.all$peak)/max(log(scalling.all$peak))
+du<-log(scalling.all$duration)/max(log(scalling.all$duration))
+```
+
+```{r}
+#first way to setup initial beta_0
+getISD1<-function(beta){
+  isd<-1/beta
+  for (i in 2:length(beta)){
+    isd[i]<-(1/beta[i]+isd[i-1]*(i-1))/i
+  }
+  return(isd)
+}
+getMD1<-function(gamma){
+  #md <- scaling*gamma/(gamma[1]+0.001)
+  #md <- gamma/(gamma[1]+0.001)
+  if(gamma[1]!=0){
+    md<-gamma/gamma[1]
+  }
+  else{
+    md <- gamma/gamma[tail(which(gamma==0),1)+1]
+  }
+  #return(md)
+}
+```
+
+
+```{r}
+a_list<-list()
+b_list<-list()
+confirm_list<-list()
+for (i in 1:length(name)){
+  t<-all[[i]]
+  confirm_list[[i]]<-tail(log(t$confirm),-1)
+}
+names(confirm_list) <-name
+confirm<-do.call(cbind, lapply(lapply(confirm_list, unlist), 
+                               `length<-`, max(lengths(confirm_list))))
+confirm.daymax<-apply(confirm,MARGIN=1,max,na.rm = T)
+for(i in 1:(nrow(confirm))){
+  confirm[i,]<-confirm[i,]/confirm.daymax[i]
+}
+
+for (i in 1:length(name)){
+  t<-all[[i]]
+  #pop[i]<-pop[pop$country==country[i],2]
+  #a_list[[i]]<-getISD1(7,getBeta(t,7))*confirm[,i]*popindex[i,2]
+  a_list[[i]]<-getISD1(getBeta(t,7)[-c(1:6)])
+  #a_list[[i]]<-data.frame(time=1:(nrow(t)-8),isd=getISD1(7,getBeta(t,7))[-c(1:7)])
+  b_list[[i]]<-getMD1(getHeal(t,7))
+}
+
+names(a_list) <-name
+names(b_list) <-name
+methoda<-do.call(cbind, lapply(lapply(a_list, unlist), `length<-`, max(lengths(a_list))))
+methodb<-do.call(cbind, lapply(lapply(b_list, unlist), `length<-`, max(lengths(b_list))))
+
+        
+methoda1<-cbind(data.frame(time=1:nrow(methoda)),methoda)
+methodb1<-cbind(data.frame(time=1:nrow(methodb)),methodb)
+write.csv(methoda,'/Users/zhen/desktop/usisd/isd11.csv')
+```
+
+```{r}
+p<-ggplot()
+i<-1
+while(i<=length(name)){
+  df<-a_list[[i]]
+  p<-p+geom_line(data=df,aes(x=time,y=isd,colour=name[i]))
+  i<-i+1
+}
+p
+```
+
+
+```{r}
+library('reshape')
+library(ggthemes)
+test<-melt(methoda1,id='time',na.rm = T)
+test1<-NULL
+test2<-NULL
+test3<-NULL
+for (i in 1:length(name)){
+  df<-filter(test,variable==name[i])
+  if (tail(df,1)[,3]<15){
+    test1<-rbind(df,test1)
+  }
+  if (tail(df,1)[,3]>=15 && tail(df,1)[,3]<20){
+    test2<-rbind(df,test2)
+  }
+  if(tail(df,1)[,3]>=20){
+    test3<-rbind(df,test3)
+  }
+}
+
+p1<-ggplot(data=test1,aes(x=time,y=value,color=variable))+geom_line()+theme_bw(base_family = "STKaiti" )+
+  xlab("天数")+ylab("ISD")+
+  labs(title="社会隔离措施评价指数(ISD)——方法2",subtitle = "ISD指数小于15的地区",caption = '数据截至05/09/2020',color='州名称')+
+  theme(plot.title = element_text(color = 'black',size=15,hjust=0.5))
+p2<-ggplot(data=test2,aes(x=time,y=value,color=variable))+geom_line()+theme_bw(base_family = "STKaiti" )+
+  xlab("天数")+ylab("ISD")+
+  labs(title="社会隔离措施评价指数(ISD)——方法2",subtitle = "ISD指数大于15小于20的地区",caption = '数据截至05/09/2020',color='州名称')+
+  theme(plot.title = element_text(color = 'black',size=15,hjust=0.5))
+p3<-ggplot(data=test3,aes(x=time,y=value,color=variable))+geom_line()+theme_bw(base_family = "STKaiti" )+
+  xlab("天数")+ylab("ISD")+
+  labs(title="社会隔离措施评价指数(ISD)——方法2",subtitle = "ISD指数大于20的地区",caption = '数据截至05/09/2020',color='州名称')+
+  theme(plot.title = element_text(color = 'black',size=15,hjust=0.5))
+p1
+p2
+p3
+ggsave(p1,filename = '/Users/zhen/desktop/usisd/isd11.jpg',width = 9,height = 6,dpi = 600)
+ggsave(p2,filename = '/Users/zhen/desktop/usisd/isd22.jpg',width = 9,height = 6,dpi = 600)
+ggsave(p3,filename = '/Users/zhen/desktop/usisd/isd33.jpg',width = 9,height = 6,dpi = 600)
+```
+
+```{r}
+write.csv(methoda,'/Users/zhen/desktop/usisd/isd.csv')
+```
+
+
+```{r}
+methoda1$y<-rep(NA,nrow(methoda1))
+methoda1$name<-rep(NA,nrow(methoda1))
+methodb1$y<-rep(NA,nrow(methodb1))
+methodb1$name<-rep(NA,nrow(methodb1))
+for (i in 1:length(name)){
+  a=c()
+  a[i]=tail(which(is.na(methoda1[i+1])==F),1)
+  if( is.na(methoda1$y[a[i]]) == T){
+    methoda1$y[a[i]]=methoda1[tail(which(is.na(methoda1[i+1])==F),1),i+1]
+    methoda1$name[a[i]]=name[i]
+  }
+  else {
+    if(is.na(methoda1$y[a[i]+1]) == T){
+    methoda1$y[a[i]+1]=methoda1[tail(which(is.na(methoda1[i+1])==F),1),i+1]
+    methoda1$name[a[i]+1]=country[i]
+    }
+    else{
+      if(is.na(methoda1$y[a[i]+2]) == T){
+    methoda1$y[a[i]+2]=methoda1[tail(which(is.na(methoda1[i+1])==F),1),i+1]
+    methoda1$name[a[i]+2]=country[i]
+    }
+    else{
+      if(is.na(methoda1$y[a[i]+3]) == T){
+          methoda1$y[a[i]+3]=methoda1[tail(which(is.na(methoda1[i+1])==F),1),i+1]
+          methoda1$name[a[i]+3]=country[i]
+      }
+      else{
+        if(is.na(methoda1$y[a[i]+4]) == T){
+        methoda1$y[a[i]+4]=methoda1[tail(which(is.na(methoda1[i+1])==F),1),i+1]
+        methoda1$name[a[i]+4]=country[i]
+        }
+        else{
+        methoda1$y[a[i]+5]=methoda1[tail(which(is.na(methoda1[i+1])==F),1),i+1]
+        methoda1$name[a[i]+5]=country[i]
+        }
+      }
+    }
+    }
+    }
+  }
+
+for (i in 1:length(country)){
+  a=c()
+  a[i]=tail(which(is.na(methodb1[i+1])==F),1)
+  if( is.na(methodb1$y[a[i]]) == T){
+    methodb1$y[a[i]]=methodb1[tail(which(is.na(methodb1[i+1])==F),1),i+1]
+    methodb1$name[a[i]]=country[i]
+  }
+  else {
+    if(is.na(methodb1$y[a[i]+1]) == T){
+    methodb1$y[a[i]+1]=methodb1[tail(which(is.na(methodb1[i+1])==F),1),i+1]
+    methodb1$name[a[i]+1]=country[i]
+    }
+    else{
+    if(is.na(methodb1$y[a[i]+2]) == T){
+    methodb1$y[a[i]+2]=methodb1[tail(which(is.na(methodb1[i+1])==F),1),i+1]
+    methodb1$name[a[i]+2]=country[i]
+    }
+    else{
+    methodb1$y[a[i]+3]=methodb1[tail(which(is.na(methodb1[i+1])==F),1),i+1]
+    methodb1$name[a[i]+3]=country[i]
+    }
+    }
+  }
+}
+#write.csv(methodb1,'/Users/zhen/desktop/gamma.csv')
+```
+
+
+
+```{r}
+library(ggthemes)
+p<-ggplot(methoda1,aes(x=time,y=ISD)) + 
+  theme_bw(base_family = "STKaiti" )+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,2],colour = '英国'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,3],colour = '法国'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,4],colour = '德国'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,5],colour = '西班牙'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,6],colour = '意大利'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,7],colour = '美国'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,8],colour = '瑞典'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,9],colour = '丹麦'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,10],colour = '挪威'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,11],colour = '荷兰'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,12],colour = '加拿大'))+
+  scale_color_discrete(limits=c("美国","英国","法国","德国","西班牙","意大利","瑞典","丹麦","挪威","荷兰","加拿大"))+
+  #geom_text(data=methoda1,aes(x=time+1,y=y+0.1,label = name),check_overlap =F,size = 4)+
+  xlab("天数")+
+  ylab("ISD")+
+  labs(title="社会隔离措施评价指数(ISD)",subtitle = "疫情第二阶段爆发地区",caption = '起始日为该地区累计感染人数超过总人口百万分之一之日\n数据截至05/09/2020',color='国家')+
+  theme(plot.title = element_text(color = 'black',size=15,hjust=0.5))
+methodb2<-methodb1[1:nrow(methodb1),]
+
+g<-ggplot(methodb1,aes(x=time,y=ISD)) + 
+  theme_bw(base_family = "STKaiti" )+
+  #geom_line(data=methodb1,aes(x=time,y=methodb1[,2],colour = '英国'))+
+  geom_line(data=methodb1,aes(x=time,y=methodb1[,3],colour = '法国'))+
+  geom_line(data=methodb1,aes(x=time,y=methodb1[,4],colour = '德国'))+
+  geom_line(data=methodb1,aes(x=time,y=methodb1[,5],colour = '西班牙'))+
+  geom_line(data=methodb1,aes(x=time,y=methodb1[,6],colour = '意大利'))+
+  geom_line(data=methodb1,aes(x=time,y=methodb1[,7],colour = '美国'))+
+  geom_line(data=methodb1,aes(x=time,y=methodb1[,8],colour = '瑞典'))+
+  geom_line(data=methodb1,aes(x=time,y=methodb1[,9],colour = '丹麦'))+
+  #geom_line(data=methodb1,aes(x=time,y=methodb1[,10],colour = '挪威'))+
+  #geom_line(data=methodb1,aes(x=time,y=methodb1[,11],colour = '荷兰'))+
+  geom_line(data=methoda1,aes(x=time,y=methoda1[,12],colour = '加拿大'))+
+  scale_color_discrete(limits=c("美国","英国","法国","德国","西班牙","意大利","瑞典","丹麦","挪威","荷兰","加拿大"))+
+  #geom_text(data=methodb1,aes(x=time+1,y=y+0.1,label = name),check_overlap =F,size = 4)+
+  xlab("天数")+
+  ylab("MD")+
+  labs(title="医疗评价指数(MD)",subtitle = "疫情第二阶段爆发地区",caption = '起始日为该地区累计感染人数超过总人口百万分之一之日\n数据截至05/09/2020',color='国家')+
+  theme(plot.title = element_text(color = 'black',size=15,hjust=0.5))
+p1<-p + theme_calc ()+theme(text = element_text(family = 'STKaiti'))
+g1<-g + theme_calc ()+theme(text = element_text(family = 'STKaiti'))
+p1
+g1
+ggsave(p1,filename = '/Users/zhen/desktop/isd/isd欧美.jpg',width = 9,height = 6,dpi = 600)
+ggsave(g1,filename = '/Users/zhen/desktop/isd/md欧美.jpg',width = 9,height = 6,dpi = 600)
+```
+
+
+Add a new chunk by clicking the *Insert Chunk* button on the toolbar or by pressing *Cmd+Option+I*.
+
+When you save the notebook, an HTML file containing the code and output will be saved alongside it (click the *Preview* button or press *Cmd+Shift+K* to preview the HTML file). 
+
+The preview shows you a rendered HTML copy of the contents of the editor. Consequently, unlike *Knit*, *Preview* does not run any R code chunks. Instead, the output of the chunk when it was last run in the editor is displayed.
+
